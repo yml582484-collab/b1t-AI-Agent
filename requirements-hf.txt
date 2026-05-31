@@ -1,0 +1,26 @@
+# Hugging Face Spaces 部署专用依赖
+# LLM & API
+openai>=1.0.0
+httpx>=0.25.0
+
+# Web Framework
+fastapi>=0.104.0
+uvicorn[standard]>=0.24.0
+python-multipart>=0.0.6
+
+# Data Processing
+pydantic>=2.5.0
+pydantic-settings>=2.1.0
+PyYAML>=6.0.1
+
+# Utilities
+python-dotenv>=1.0.0
+rich>=13.7.0
+tenacity>=8.2.3
+
+# File Processing
+PyPDF2>=3.0.0
+python-docx>=1.0.0
+
+# Optional: Code Execution
+jupyter-client>=8.5.0

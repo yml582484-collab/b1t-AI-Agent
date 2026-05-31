@@ -1,0 +1,875 @@
+// b1t-AI 前端应用主逻辑
+class B1tAIApp {
+    constructor() {
+        this.messages = [];
+        this.chatHistory = [];
+        this.currentChatId = null;
+        this.reactMode = false;
+        this.isLoading = false;
+        this.sidebarCollapsed = false;
+
+        this.initElements();
+        this.initEventListeners();
+        this.restoreSidebarState();
+        this.loadChatHistory();
+        this.fetchUsageStats();
+    }
+
+    // 初始化 DOM 元素
+    initElements() {
+        this.sidebar = document.getElementById('sidebar');
+        this.menuToggle = document.getElementById('menuToggle');
+        this.newChatBtn = document.getElementById('newChatBtn');
+        this.chatHistoryEl = document.getElementById('chatHistory');
+        this.chatTitle = document.getElementById('chatTitle') || null;
+        this.welcomeScreen = document.getElementById('welcomeScreen');
+        this.messagesContainer = document.getElementById('messagesContainer');
+        this.messageInput = document.getElementById('messageInput');
+        this.sendBtn = document.getElementById('sendBtn');
+        this.reactToggle = document.getElementById('reactToggle');
+        this.loadingOverlay = document.getElementById('loadingOverlay');
+        
+        // 余额显示元素
+        this.totalBalance = document.getElementById('totalBalance');
+        this.toppedUpBalance = document.getElementById('toppedUpBalance');
+        this.grantedBalance = document.getElementById('grantedBalance');
+        this.balanceStatus = document.getElementById('balanceStatus');
+        
+        // 统计元素
+        this.usageTokens = document.getElementById('usageTokens');
+        this.usageCalls = document.getElementById('usageCalls');
+        this.lastUpdated = document.getElementById('lastUpdated');
+        this.refreshUsageBtn = document.getElementById('refreshUsageBtn');
+        
+        // API Key设置
+        this.apiKeyModal = document.getElementById('apiKeyModal');
+        this.apiKeyInput = document.getElementById('apiKeyInput');
+
+        // 侧边栏折叠元素
+        this.sidebarTouchZone = document.getElementById('sidebarTouchZone');
+        this.expandSidebarBtn = document.getElementById('expandSidebarBtn');
+        
+        // 附件上传元素
+        this.attachmentBtn = document.getElementById('attachmentBtn');
+        this.fileInput = document.getElementById('fileInput');
+        this.filePreview = document.getElementById('filePreview');
+        this.selectedFiles = []; // 存储选中的文件
+    }
+
+    // 初始化事件监听
+    initEventListeners() {
+        // 菜单切换
+        this.menuToggle.addEventListener('click', () => {
+            this.sidebar.classList.toggle('open');
+        });
+
+        // 新建对话
+        this.newChatBtn.addEventListener('click', () => {
+            this.startNewChat();
+        });
+
+        // 发送消息
+        this.sendBtn.addEventListener('click', () => {
+            this.sendMessage();
+        });
+
+        this.messageInput.addEventListener('keydown', (e) => {
+            if (e.key === 'Enter' && !e.shiftKey) {
+                e.preventDefault();
+                this.sendMessage();
+            }
+        });
+
+        // ReAct 模式切换
+        this.reactToggle.addEventListener('click', () => {
+            this.reactMode = !this.reactMode;
+            this.reactToggle.classList.toggle('active', this.reactMode);
+        });
+
+        // 自动调整输入框高度
+        this.messageInput.addEventListener('input', () => {
+            this.autoResizeInput();
+        });
+
+        // 快捷操作点击
+        document.querySelectorAll('.quick-action').forEach(action => {
+            action.addEventListener('click', () => {
+                const prompt = action.dataset.prompt;
+                this.messageInput.value = prompt;
+                this.autoResizeInput();
+                this.messageInput.focus();
+            });
+        });
+        
+        // 刷新余额
+        this.refreshUsageBtn.addEventListener('click', () => {
+            this.fetchUsageStats();
+        });
+
+        // 设置按钮 - 打开API Key设置
+        const settingsBtn = document.querySelector('.settings-btn');
+        if (settingsBtn) {
+            settingsBtn.addEventListener('click', () => {
+                this.openApiKeyModal();
+            });
+            settingsBtn.style.cursor = 'pointer';
+        }
+
+        // 页面加载时检查API Key状态
+        this.checkApiKeyStatus();
+
+        // 侧边栏折叠/展开（使用透明触摸区域）
+        if (this.sidebarTouchZone) {
+            this.sidebarTouchZone.addEventListener('click', (e) => {
+                e.stopPropagation();
+                this.toggleSidebar();
+            });
+        }
+
+        if (this.expandSidebarBtn) {
+            this.expandSidebarBtn.addEventListener('click', () => {
+                this.toggleSidebar(true);
+            });
+        }
+
+        // 点击外部关闭侧边栏
+        document.addEventListener('click', (e) => {
+            if (window.innerWidth <= 768 && 
+                !this.sidebar.contains(e.target) && 
+                !this.menuToggle.contains(e.target)) {
+                this.sidebar.classList.remove('open');
+            }
+        });
+
+        // 附件上传事件
+        if (this.attachmentBtn && this.fileInput) {
+            this.attachmentBtn.addEventListener('click', () => {
+                this.fileInput.click();
+            });
+
+            this.fileInput.addEventListener('change', (e) => {
+                this.handleFileSelect(e.target.files);
+            });
+        }
+    }
+
+    // 处理文件选择
+    handleFileSelect(files) {
+        if (!files || files.length === 0) return;
+        
+        // 添加到已选文件列表
+        for (const file of files) {
+            // 检查文件大小（最大10MB）
+            if (file.size > 10 * 1024 * 1024) {
+                alert(`文件 ${file.name} 超过10MB限制`);
+                continue;
+            }
+            this.selectedFiles.push(file);
+        }
+        
+        this.updateFilePreview();
+    }
+
+    // 更新文件预览显示
+    updateFilePreview() {
+        if (this.selectedFiles.length === 0) {
+            this.filePreview.style.display = 'none';
+            this.filePreview.innerHTML = '';
+            return;
+        }
+
+        this.filePreview.style.display = 'flex';
+        this.filePreview.innerHTML = this.selectedFiles.map((file, index) => {
+            const isImage = file.type.startsWith('image/');
+            const fileIcon = this.getFileIcon(file.type);
+            
+            if (isImage) {
+                const imageUrl = URL.createObjectURL(file);
+                return `
+                    <div class="file-item" data-index="${index}">
+                        <img src="${imageUrl}" class="file-item-image" alt="${file.name}">
+                        <span class="file-item-name">${file.name}</span>
+                        <button class="file-item-remove" onclick="app.removeFile(${index})" title="移除">×</button>
+                    </div>
+                `;
+            } else {
+                return `
+                    <div class="file-item" data-index="${index}">
+                        <svg class="file-item-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            ${fileIcon}
+                        </svg>
+                        <span class="file-item-name">${file.name}</span>
+                        <button class="file-item-remove" onclick="app.removeFile(${index})" title="移除">×</button>
+                    </div>
+                `;
+            }
+        }).join('');
+    }
+
+    // 获取文件图标SVG
+    getFileIcon(mimeType) {
+        if (mimeType.includes('pdf')) {
+            return '<path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><polyline points="10 9 9 9 8 9"/>';
+        } else if (mimeType.includes('image')) {
+            return '<rect x="3" y="3" width="18" height="18" rx="2" ry="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/>';
+        } else if (mimeType.includes('text') || mimeType.includes('markdown')) {
+            return '<path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><polyline points="10 9 9 9 8 9"/>';
+        } else {
+            return '<path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/>';
+        }
+    }
+
+    // 移除已选文件
+    removeFile(index) {
+        this.selectedFiles.splice(index, 1);
+        this.updateFilePreview();
+    }
+
+    // 上传文件到服务器
+    async uploadFiles() {
+        if (this.selectedFiles.length === 0) return [];
+
+        const uploadedFiles = [];
+        
+        for (const file of this.selectedFiles) {
+            const formData = new FormData();
+            formData.append('file', file);
+
+            try {
+                const response = await fetch('/api/upload', {
+                    method: 'POST',
+                    body: formData
+                });
+
+                if (response.ok) {
+                    const result = await response.json();
+                    uploadedFiles.push(result);
+                } else {
+                    console.error(`上传文件 ${file.name} 失败`);
+                }
+            } catch (error) {
+                console.error(`上传文件 ${file.name} 出错:`, error);
+            }
+        }
+
+        // 清空已选文件
+        this.selectedFiles = [];
+        this.updateFilePreview();
+        
+        return uploadedFiles;
+    }
+
+    // 自动调整输入框高度
+    autoResizeInput() {
+        this.messageInput.style.height = 'auto';
+        this.messageInput.style.height = Math.min(this.messageInput.scrollHeight, 200) + 'px';
+    }
+
+    // 显示加载状态
+    showLoading(show = true) {
+        this.isLoading = show;
+        this.loadingOverlay.style.display = show ? 'flex' : 'none';
+        this.sendBtn.disabled = show;
+        this.messageInput.disabled = show;
+
+        // 更新loading提示文字
+        if (show) {
+            const loadingText = this.loadingOverlay.querySelector('.loading-text');
+            if (loadingText) {
+                loadingText.textContent = 'b1t-AI 正在思考...';
+
+                // 启动动态提示
+                this._startLoadingAnimation(loadingText);
+            }
+        } else {
+            if (this._loadingTimer) {
+                clearInterval(this._loadingTimer);
+                this._loadingTimer = null;
+            }
+        }
+    }
+
+    // Loading动画 - 动态更新提示
+    _startLoadingAnimation(element) {
+        const messages = [
+            'b1t-AI 正在思考...',
+            'b1t-AI 正在分析任务...',
+            'b1t-AI 正在调用工具...',
+            'b1t-AI 正在处理中...',
+            '⏳ 复杂任务可能需要较长时间...',
+        ];
+
+        let index = 0;
+        let dotCount = 0;
+
+        // 主提示循环（每3秒切换）
+        this._loadingTimer = setInterval(() => {
+            index = (index + 1) % messages.length;
+            element.textContent = messages[index];
+        }, 3000);
+
+        // 点号动画（每500ms）
+        setInterval(() => {
+            dotCount = (dotCount + 1) % 4;
+            const baseText = messages[index % messages.length];
+            element.textContent = baseText + '.'.repeat(dotCount);
+        }, 500);
+    }
+
+    // 开始新对话
+    startNewChat() {
+        this.messages = [];
+        this.currentChatId = 'chat_' + Date.now();
+        this.welcomeScreen.style.display = 'flex';
+        this.messagesContainer.classList.remove('active');
+        this.messagesContainer.innerHTML = '';
+        if (this.chatTitle) this.chatTitle.textContent = '新对话';
+        this.messageInput.value = '';
+        this.autoResizeInput();
+        
+        // 更新历史记录高亮
+        this.updateHistoryHighlight();
+        
+        // 移动端关闭侧边栏
+        if (window.innerWidth <= 768) {
+            this.sidebar.classList.remove('open');
+        }
+    }
+
+    // 加载对话历史
+    loadChatHistory() {
+        const saved = localStorage.getItem('b1tai_history');
+        if (saved) {
+            this.chatHistory = JSON.parse(saved);
+            this.renderChatHistory();
+        }
+    }
+
+    // 保存对话历史
+    saveChatHistory() {
+        if (this.messages.length > 0) {
+            const chatItem = {
+                id: this.currentChatId,
+                title: this.getChatTitle(),
+                timestamp: new Date().toISOString(),
+                messages: this.messages
+            };
+
+            // 查找是否已存在
+            const index = this.chatHistory.findIndex(c => c.id === this.currentChatId);
+            if (index >= 0) {
+                this.chatHistory[index] = chatItem;
+            } else {
+                this.chatHistory.unshift(chatItem);
+                // 只保留最近 50 个对话
+                if (this.chatHistory.length > 50) {
+                    this.chatHistory = this.chatHistory.slice(0, 50);
+                }
+            }
+
+            localStorage.setItem('b1tai_history', JSON.stringify(this.chatHistory));
+            this.renderChatHistory();
+        }
+    }
+
+    // 获取对话标题
+    getChatTitle() {
+        const firstMessage = this.messages.find(m => m.role === 'user');
+        if (firstMessage) {
+            const title = firstMessage.content.slice(0, 30);
+            return title.length < firstMessage.content.length ? title + '...' : title;
+        }
+        return '新对话';
+    }
+
+    // 渲染对话历史
+    renderChatHistory() {
+        this.chatHistoryEl.innerHTML = '';
+        
+        this.chatHistory.forEach(chat => {
+            const item = document.createElement('div');
+            item.className = 'history-item' + (chat.id === this.currentChatId ? ' active' : '');
+            
+            // 创建标题容器
+            const titleSpan = document.createElement('span');
+            titleSpan.className = 'history-title';
+            titleSpan.textContent = chat.title || '新对话';
+            
+            // 创建删除按钮
+            const deleteBtn = document.createElement('button');
+            deleteBtn.className = 'history-delete-btn';
+            deleteBtn.innerHTML = '×';
+            deleteBtn.title = '删除对话';
+            deleteBtn.addEventListener('click', (e) => {
+                e.stopPropagation(); // 阻止触发加载对话
+                this.deleteChat(chat.id);
+            });
+            
+            item.appendChild(titleSpan);
+            item.appendChild(deleteBtn);
+            
+            item.addEventListener('click', () => {
+                this.loadChat(chat.id);
+            });
+            
+            this.chatHistoryEl.appendChild(item);
+        });
+    }
+    
+    // 删除历史对话
+    deleteChat(chatId) {
+        // 从历史列表中移除
+        const index = this.chatHistory.findIndex(c => c.id === chatId);
+        if (index >= 0) {
+            this.chatHistory.splice(index, 1);
+            localStorage.setItem('b1tai_history', JSON.stringify(this.chatHistory));
+            
+            // 如果删除的是当前对话，清空界面
+            if (chatId === this.currentChatId) {
+                this.currentChatId = null;
+                this.messages = [];
+                this.renderMessages();
+                if (this.chatTitle) this.chatTitle.textContent = 'b1t-AI';
+                this.welcomeScreen.style.display = 'flex';
+                this.messagesContainer.classList.remove('active');
+            }
+            
+            // 重新渲染历史列表
+            this.renderChatHistory();
+        }
+    }
+
+    // 更新历史记录高亮
+    updateHistoryHighlight() {
+        document.querySelectorAll('.history-item').forEach(item => {
+            item.classList.remove('active');
+        });
+    }
+
+    // 加载历史对话
+    loadChat(chatId) {
+        const chat = this.chatHistory.find(c => c.id === chatId);
+        if (chat) {
+            this.currentChatId = chatId;
+            this.messages = chat.messages;
+            this.renderMessages();
+            if (this.chatTitle) this.chatTitle.textContent = chat.title || '新对话';
+            this.welcomeScreen.style.display = 'none';
+            this.messagesContainer.classList.add('active');
+            
+            // 移动端关闭侧边栏
+            if (window.innerWidth <= 768) {
+                this.sidebar.classList.remove('open');
+            }
+        }
+    }
+
+    // 发送消息
+    async sendMessage() {
+        const content = this.messageInput.value.trim();
+        
+        // 防止重复发送的严格检查
+        if ((!content && this.selectedFiles.length === 0) || this.isLoading || this._sendingLock) {
+            console.log('发送被阻止:', { content: !!content, files: this.selectedFiles.length, isLoading: this.isLoading, lock: this._sendingLock });
+            return;
+        }
+
+        // 设置发送锁
+        this._sendingLock = true;
+        this.isLoading = true;
+        this.sendBtn.disabled = true;
+
+        try {
+            // 隐藏欢迎界面
+            this.welcomeScreen.style.display = 'none';
+            this.messagesContainer.classList.add('active');
+
+            // 如果有文件，先上传
+            let attachments = [];
+            if (this.selectedFiles.length > 0) {
+                this.showLoading(true);
+                attachments = await this.uploadFiles();
+                this.showLoading(false);
+            }
+
+            // 构建消息内容（包含附件信息）
+            let messageContent = content;
+            if (attachments.length > 0) {
+                const attachmentInfo = attachments.map(att => {
+                    if (att.type === 'image') {
+                        return `[图片: ${att.filename}]`;
+                    } else {
+                        return `[文件: ${att.filename}]`;
+                    }
+                }).join('\n');
+                messageContent = attachmentInfo + (content ? '\n\n' + content : '');
+            }
+
+            // 清空输入框（在发送前清空，防止重复发送时内容还在）
+            this.messageInput.value = '';
+            this.autoResizeInput();
+
+            // 添加用户消息
+            this.addMessage('user', messageContent, null, attachments);
+
+            // 发送到后端（包含附件内容）
+            await this.sendToAPI(content, attachments);
+        } finally {
+            // 延迟释放锁，防止快速连续点击
+            setTimeout(() => {
+                this._sendingLock = false;
+            }, 500);
+        }
+    }
+
+    // 添加消息到界面
+    addMessage(role, content, thinking = null, attachments = []) {
+        const message = {
+            role,
+            content,
+            timestamp: new Date().toISOString(),
+            thinking,
+            attachments
+        };
+        this.messages.push(message);
+
+        // 如果是新对话，生成 ID
+        if (!this.currentChatId) {
+            this.currentChatId = 'chat_' + Date.now();
+        }
+
+        // 更新标题
+        if (role === 'user' && this.messages.filter(m => m.role === 'user').length === 1) {
+            if (this.chatTitle) this.chatTitle.textContent = this.getChatTitle();
+        }
+
+        this.renderMessages();
+        this.saveChatHistory();
+    }
+
+    // 渲染所有消息
+    renderMessages() {
+        this.messagesContainer.innerHTML = '';
+        
+        this.messages.forEach(msg => {
+            const el = this.createMessageElement(msg);
+            this.messagesContainer.appendChild(el);
+        });
+
+        // 滚动到底部
+        this.scrollToBottom();
+    }
+
+    // 创建消息元素
+    createMessageElement(message) {
+        const div = document.createElement('div');
+        div.className = `message ${message.role}`;
+        
+        const time = new Date(message.timestamp).toLocaleTimeString('zh-CN', {
+            hour: '2-digit',
+            minute: '2-digit'
+        });
+
+        const avatarSVG = message.role === 'assistant' 
+            ? `<svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                 <path d="M12 2L2 7L12 12L22 7L12 2Z" fill="white"/>
+                 <path d="M2 17L12 22L22 17" stroke="white" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+                 <path d="M2 12L12 17L22 12" stroke="white" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+               </svg>`
+            : `<svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                 <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/>
+                 <circle cx="12" cy="7" r="4" fill="white"/>
+               </svg>`;
+
+        div.innerHTML = `
+            <div class="message-avatar">${avatarSVG}</div>
+            <div class="message-content">
+                <div class="message-header">
+                    <span class="message-role">${message.role === 'assistant' ? 'b1t-AI' : '你'}</span>
+                    <span class="message-time">${time}</span>
+                </div>
+                <div class="message-body">${this.formatMessage(message.content)}</div>
+                ${message.thinking ? this.renderThinking(message.thinking) : ''}
+            </div>
+        `;
+
+        return div;
+    }
+
+    // 格式化消息内容（使用 marked.js 渲染 Markdown）
+    formatMessage(content) {
+        console.log('formatMessage called, marked available:', typeof marked !== 'undefined');
+        if (typeof marked !== 'undefined') {
+            // 配置 marked：关闭 mangle（不混淆邮箱），开启 breaks（换行转<br>）
+            marked.setOptions({
+                breaks: true,
+                gfm: true
+            });
+            const result = marked.parse(content);
+            console.log('marked parsed result:', result.substring(0, 100));
+            return result;
+        }
+        // 降级：简单处理
+        let formatted = content
+            .replace(/&/g, '&amp;')
+            .replace(/</g, '&lt;')
+            .replace(/>/g, '&gt;');
+        formatted = formatted.replace(/```([\s\S]*?)```/g, (match, code) => {
+            return `<pre><code>${code.trim()}</code></pre>`;
+        });
+        formatted = formatted.replace(/`([^`]+)`/g, '<code>$1</code>');
+        formatted = formatted.replace(/\n/g, '<br>');
+        return formatted;
+    }
+
+    // 渲染思考过程
+    renderThinking(thinking) {
+        if (!thinking || thinking.length === 0) return '';
+        
+        let html = '<div class="thinking-bubble">';
+        thinking.forEach((step, index) => {
+            html += `
+                <div class="thinking-step">
+                    <span class="thinking-label">${index + 1}</span>
+                    <div class="thinking-content">
+                        <div><strong>思考:</strong> ${step.thought || '-'}</div>
+                        ${step.action ? `<div><strong>行动:</strong> ${step.action}</div>` : ''}
+                        ${step.observation ? `<div><strong>观察:</strong> ${step.observation}</div>` : ''}
+                    </div>
+                </div>
+            `;
+        });
+        html += '</div>';
+        return html;
+    }
+
+    // 发送到后端 API
+    async sendToAPI(content, attachments = []) {
+        this.showLoading(true);
+
+        try {
+            const response = await fetch('/api/chat', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify({
+                    message: content,
+                    use_react: this.reactMode,
+                    attachments: attachments
+                })
+            });
+
+            if (!response.ok) {
+                throw new Error(`HTTP error! status: ${response.status}`);
+            }
+
+            const data = await response.json();
+            
+            if (data.success) {
+                // 添加助手回复
+                this.addMessage('assistant', data.response, data.reasoning_trace || null);
+            } else {
+                this.addMessage('assistant', '抱歉，出现了一些问题：' + (data.error || '未知错误'));
+            }
+        } catch (error) {
+            console.error('Error:', error);
+            this.addMessage('assistant', 
+                '抱歉，连接服务器时出现了问题。请检查：\n' +
+                '1. 后端服务是否正在运行\n' +
+                '2. API Key 是否正确配置\n\n' +
+                '错误信息：' + error.message
+            );
+        } finally {
+            this.showLoading(false);
+            this.fetchUsageStats(); // 发送完消息后刷新余额
+        }
+    }
+    
+    // 获取 API 使用情况和真实余额
+    async fetchUsageStats() {
+        try {
+            const response = await fetch('/api/usage');
+            
+            if (!response.ok) {
+                throw new Error(`HTTP error! status: ${response.status}`);
+            }
+            
+            const data = await response.json();
+            
+            // 更新显示
+            this.updateUsageDisplay(data);
+            
+        } catch (error) {
+            console.error('Failed to fetch usage stats:', error);
+            this.updateErrorDisplay(error.message);
+        }
+    }
+    
+    // 更新使用情况显示（真实余额）
+    updateUsageDisplay(data) {
+        // 更新余额信息
+        const balance = data.balance || {};
+        const totalBalance = balance.total_balance || 0;
+        const toppedUpBalance = balance.topped_up_balance || 0;
+        const grantedBalance = balance.granted_balance || 0;
+        
+        this.totalBalance.textContent = `¥ ${totalBalance.toFixed(2)}`;
+        this.toppedUpBalance.textContent = `¥ ${toppedUpBalance.toFixed(2)}`;
+        this.grantedBalance.textContent = `¥ ${grantedBalance.toFixed(2)}`;
+        
+        // 更新状态指示器
+        const isAvailable = data.is_available;
+        const statusDot = this.balanceStatus.querySelector('.status-dot');
+        const statusText = this.balanceStatus.querySelector('span:last-child');
+        
+        if (isAvailable) {
+            statusDot.className = 'status-dot available';
+            statusText.textContent = '可用';
+        } else {
+            statusDot.className = 'status-dot error';
+            statusText.textContent = '不可用';
+        }
+        
+        // 更新本地统计
+        const tokenUsage = data.token_usage || {};
+        const totalTokens = tokenUsage.total_tokens || 0;
+        this.usageTokens.textContent = totalTokens.toLocaleString();
+        this.usageCalls.textContent = (data.api_calls || 0).toString();
+        
+        // 更新最后刷新时间
+        if (data.last_updated) {
+            const date = new Date(data.last_updated);
+            this.lastUpdated.textContent = date.toLocaleTimeString('zh-CN', { 
+                hour: '2-digit', 
+                minute: '2-digit',
+                second: '2-digit'
+            });
+        }
+    }
+    
+    // 显示错误状态
+    updateErrorDisplay(errorMessage) {
+        this.totalBalance.textContent = '¥ --';
+        this.toppedUpBalance.textContent = '¥ --';
+        this.grantedBalance.textContent = '¥ --';
+        
+        const statusDot = this.balanceStatus.querySelector('.status-dot');
+        const statusText = this.balanceStatus.querySelector('span:last-child');
+        statusDot.className = 'status-dot error';
+        statusText.textContent = '获取失败';
+        
+        this.lastUpdated.textContent = '--:--';
+    }
+
+    // 滚动到底部
+    scrollToBottom() {
+        setTimeout(() => {
+            this.messagesContainer.scrollTop = this.messagesContainer.scrollHeight;
+        }, 100);
+    }
+
+    // 切换侧边栏状态
+    toggleSidebar(forceExpand = false) {
+        if (forceExpand) {
+            this.sidebarCollapsed = false;
+        } else {
+            this.sidebarCollapsed = !this.sidebarCollapsed;
+        }
+        
+        this.sidebar.classList.toggle('collapsed', this.sidebarCollapsed);
+        
+        if (this.expandSidebarBtn) {
+            this.expandSidebarBtn.style.display = (this.sidebarCollapsed || window.innerWidth <= 768) ? 'flex' : 'none';
+        }
+        
+        localStorage.setItem('b1tai_sidebar_collapsed', JSON.stringify(this.sidebarCollapsed));
+    }
+
+    // 恢复侧边栏状态
+    restoreSidebarState() {
+        const saved = localStorage.getItem('b1tai_sidebar_collapsed');
+        if (saved !== null) {
+            this.sidebarCollapsed = JSON.parse(saved);
+            this.sidebar.classList.toggle('collapsed', this.sidebarCollapsed);
+            if (this.expandSidebarBtn) {
+                this.expandSidebarBtn.style.display = (this.sidebarCollapsed || window.innerWidth <= 768) ? 'flex' : 'none';
+            }
+        }
+
+        window.addEventListener('resize', () => {
+            if (window.innerWidth <= 768) {
+                if (this.expandSidebarBtn) {
+                    this.expandSidebarBtn.style.display = 'flex';
+                }
+            } else {
+                if (this.expandSidebarBtn && !this.sidebarCollapsed) {
+                    this.expandSidebarBtn.style.display = 'none';
+                }
+            }
+        });
+    // ========== API Key 管理 ==========
+    
+    async checkApiKeyStatus() {
+        try {
+            const response = await fetch('/api/config/api-key-status');
+            const data = await response.json();
+            if (!data.configured || !data.has_key) {
+                // 没有配置API Key，自动弹出设置窗口
+                setTimeout(() => this.openApiKeyModal(), 500);
+            }
+        } catch (e) {
+            // 静默失败
+        }
+    }
+    
+    openApiKeyModal() {
+        if (this.apiKeyModal) {
+            this.apiKeyModal.style.display = 'flex';
+            if (this.apiKeyInput) {
+                this.apiKeyInput.focus();
+            }
+        }
+    }
+    
+    closeApiKeyModal() {
+        if (this.apiKeyModal) {
+            this.apiKeyModal.style.display = 'none';
+        }
+    }
+    
+    async saveApiKey() {
+        const apiKey = this.apiKeyInput ? this.apiKeyInput.value.trim() : '';
+        if (!apiKey) {
+            alert('请输入API Key');
+            return;
+        }
+        
+        try {
+            const response = await fetch('/api/config/api-key', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ api_key: apiKey })
+            });
+            
+            const data = await response.json();
+            
+            if (data.success) {
+                this.closeApiKeyModal();
+                // 保存到localStorage
+                localStorage.setItem('b1tai_api_key_set', 'true');
+                alert('API Key 设置成功！');
+            } else {
+                alert('设置失败：' + (data.detail || '未知错误'));
+            }
+        } catch (error) {
+            alert('设置失败：' + error.message);
+        }
+    }
+}
+
+// 页面加载完成后初始化
+document.addEventListener('DOMContentLoaded', () => {
+    window.app = new B1tAIApp();
+    console.log('🚀 b1t-AI 前端已加载');
+});
