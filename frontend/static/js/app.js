@@ -669,7 +669,8 @@ class B1tAIApp {
                 // 添加助手回复
                 this.addMessage('assistant', data.response, data.reasoning_trace || null);
             } else {
-                this.addMessage('assistant', '抱歉，出现了一些问题：' + (data.error || '未知错误'));
+                const errorMsg = data.response || data.metadata?.error || '未知错误';
+                this.addMessage('assistant', '抱歉，出现了一些问题：' + errorMsg);
             }
         } catch (error) {
             console.error('Error:', error);
