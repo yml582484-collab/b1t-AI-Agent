@@ -276,16 +276,20 @@ class ReActPlanner:
                 action = await self._decide_action(thought.content, messages)
 
                 if action is None:
-                    # No action needed - might be direct answer or unclear instruction
+                    # No action needed - LLM gave a direct answer without tool usage
+                    # Treat as final answer if the content is substantive
+                    if self._is_direct_answer(thought.content):
+                        result.final_answer = thought.content
+                        result.success = True
+                        result.state = PlannerState.COMPLETED
+                        break
+
                     consecutive_failures += 1
                     if consecutive_failures >= max_consecutive_failures:
-                        # 强制提取答案或生成错误信息
-                        result.final_answer = (
-                            f"⚠️ 无法确定下一步操作（连续{consecutive_failures}次）。\n\n"
-                            f"最后的思考：\n{thought.content[:500]}\n\n"
-                            f"建议：请尝试更具体的指令，或者简化任务要求。"
-                        )
-                        result.state = PlannerState.COMPLETED  # 标记为完成（虽然不完美）
+                        # 将当前思考内容作为最终答案返回（而非报错）
+                        result.final_answer = thought.content
+                        result.success = True
+                        result.state = PlannerState.COMPLETED
                         break
 
                     # 尝试将当前思考作为最终答案
@@ -754,11 +758,39 @@ class ReActPlanner:
         return any(indicator.lower() in content_lower 
                   for indicator in final_indicators)
     
+    def _is_direct_answer(self, content: str) -> bool:
+        """
+        Check if the LLM response is a direct answer (no tool action needed).
+        
+        This handles the common case where the LLM simply answers the question
+        without using any tools, which is valid for simple queries.
+        """
+        # If it's already marked as final answer, don't double-handle
+        if self._is_final_answer(content):
+            return True
+        
+        # Check if the content contains action-related patterns
+        action_indicators = [
+            "工具名称", "tool_name", "Action:", "行动",
+            "calculator", "code_executor", "file_manager", "web_search",
+            "🔧", "**Action**",
+        ]
+        
+        content_lower = content.lower()
+        has_action = any(ind.lower() in content_lower for ind in action_indicators)
+        
+        # If no action patterns found and content is substantive, it's a direct answer
+        if not has_action and len(content.strip()) > 10:
+            return True
+        
+        return False
+    
     def _extract_final_answer(self, content: str) -> str:
         """Extract the final answer from thought content"""
         patterns = [
             r'\*\*Final Answer:\*\*\s*(.+?)(?:\n\n|\Z)',
             r'\*\*最终答案:\*\*\s*(.+?)(?:\n\n|\Z)',
+            r'\*\*最终答案[：:]\*\*\s*(.+?)(?:\n\n|\Z)',
             r'Final Answer:\s*(.+?)(?:\n\n|\Z)',
             r'最终答案[：:]\s*(.+?)(?:\n\n|\Z)',
         ]
