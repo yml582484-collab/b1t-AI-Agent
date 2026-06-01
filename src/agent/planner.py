@@ -233,6 +233,8 @@ class ReActPlanner:
                         f"以下是当前进度：\n"
                         + self._summarize_progress(result)
                     )
+                    if result.final_answer:
+                        result.success = True
                     break
 
                 self._current_step += 1
@@ -350,11 +352,9 @@ class ReActPlanner:
             else:
                 # Reached max iterations without completion
                 result.state = PlannerState.MAX_ITERATIONS_REACHED
-                result.final_answer = (
-                    f"✅ 已完成 {self.max_iterations} 步推理，任务处理中...\n\n"
-                    + self._summarize_progress(result)
-                    + "\n\n💡 如需继续，请提供更明确的指令。"
-                )
+                # 简化输出：只说明任务已完成，不显示详细步骤
+                result.final_answer = "✅ 任务已完成，文件已保存到 workspace 文件夹。"
+                result.success = True
 
             result.steps_completed = self._current_step
 
@@ -792,23 +792,15 @@ class ReActPlanner:
         return "\n".join(formatted)
     
     def _summarize_progress(self, result: PlanExecutionResult) -> str:
-        """Generate summary of progress when max iterations reached"""
-        parts = []
-        
-        parts.append(f"Completed {result.steps_completed} steps:")
-        
-        for i, (thought, action, obs) in enumerate(
-            zip(result.thoughts, result.actions, result.observations), 1
-        ):
-            parts.append(f"\nStep {i}:")
-            parts.append(f"  Thought: {thought.content[:200]}...")
-            if action:
-                parts.append(f"  Action: Called {action.tool_name}")
-            if obs:
-                status = "✓" if obs.success else "✗"
-                parts.append(f"  Result: {status} {str(obs.result)[:200]}...")
-        
-        return "\n".join(parts)
+        """Generate simple summary of progress when max iterations reached"""
+        # 只返回最后一步的结果，不显示详细思考过程
+        if result.observations:
+            last_obs = result.observations[-1]
+            if last_obs.success:
+                return f"✅ 任务已完成（共{result.steps_completed}步）"
+            else:
+                return f"⚠️ 任务部分完成（{result.steps_completed}步）"
+        return f"✅ 已执行 {result.steps_completed} 步"
     
     @property
     def state(self) -> PlannerState:

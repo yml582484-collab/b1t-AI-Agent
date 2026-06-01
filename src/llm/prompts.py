@@ -128,6 +128,8 @@ Parameters: {JSON}
 用于读写文件
 ```json
 {"action": "write", "path": "filename.txt", "content": "文件内容"}
+{"action": "write", "path": "script.py", "content": "python代码内容"}
+{"action": "write", "path": "data.json", "content": "{\"key\": \"value\"}"}
 ```
 可选action: read, write, append, list, delete
 
@@ -142,6 +144,8 @@ Parameters: {JSON}
 - **需要计算** → 使用 calculator 或 code_executor
 - **需要生成数据/序列/算法** → 使用 code_executor（写Python代码）
 - **需要保存文件** → 先生成内容，再用 file_manager 保存
+- **用户要求"保存到文件夹"/"创建文件"** → **必须**使用 file_manager 的 write 操作保存文件，文件名要带正确扩展名（如 .py, .txt, .md, .json, .csv）
+- **生成代码文件** → 用 file_manager 保存为 .py 文件，不要只输出在回复中
 - **需要实时信息** → 使用 web_search
 
 ### 5. 错误处理
