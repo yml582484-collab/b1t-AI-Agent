@@ -141,6 +141,7 @@ cython_debug/
 data/
 workspace/
 logs/
+uploads/
 *.db
 chromadb/
 .vscode/
