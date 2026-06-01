@@ -2,10 +2,7 @@
 <html lang="zh-CN">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover, maximum-scale=1.0, user-scalable=no">
-    <meta name="apple-mobile-web-app-capable" content="yes">
-    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
-    <meta name="theme-color" content="#0d0d12">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>b1t-AI 智能助手</title>
     <!-- Favicon - b1t-AI Logo -->
     <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Cdefs%3E%3ClinearGradient id='grad' x1='0%25' y1='0%25' x2='100%25' y2='100%25'%3E%3Cstop offset='0%25' style='stop-color:%236366f1'/%3E%3Cstop offset='100%25' style='stop-color:%238b5cf6'/%3E%3C/linearGradient%3E%3C/defs%3E%3Ccircle cx='16' cy='16' r='14' fill='url(%23grad)'/%3E%3Ctext x='16' y='22' font-family='Arial' font-size='14' font-weight='bold' fill='white' text-anchor='middle'%3Eb%3C/text%3E%3Ccircle cx='24' cy='8' r='3' fill='%2322d3ee'/%3E%3C/svg%3E">
@@ -237,7 +234,7 @@
                                 <path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48"/>
                             </svg>
                         </button>
-                        <input type="file" id="fileInput" style="display: none;" multiple accept=".txt,.md,.pdf,.doc,.docx,.png,.jpg,.jpeg,.gif,.webp">
+                        <input type="file" id="fileInput" style="display: none;" multiple accept=".txt,.md,.pdf,.doc,.docx,.png,.jpg,.jpeg,.gif,.webp,.py,.js,.html,.css,.json,.xml,.yaml,.yml,.sql,.java,.cpp,.c,.h,.go,.rs,.php,.rb,.swift,.kt,.ts,.jsx,.tsx,.vue,.scss,.less,.sh,.bat,.ps1,.log,.csv">
                     </div>
                     <!-- 文件预览区域 -->
                     <div id="filePreview" class="file-preview" style="display: none;"></div>
@@ -248,7 +245,7 @@
                         rows="1"
                     ></textarea>
                     <div class="input-actions">
-                        <button class="react-toggle" id="reactToggle" title="启用 ReAct 模式">
+                        <button class="react-toggle active" id="reactToggle" title="ReAct 模式已启用">
                             <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                                 <circle cx="12" cy="12" r="10"/>
                                 <path d="M12 6v6l4 2"/>
@@ -278,20 +275,6 @@
                 <div class="spinner-ring"></div>
             </div>
             <div class="loading-text">b1t-AI 正在思考...</div>
-        </div>
-    </div>
-
-    <!-- API Key 设置弹窗 -->
-    <div class="modal-overlay" id="apiKeyModal" style="display: none;">
-        <div class="modal-content">
-            <h3>🔑 设置 API Key</h3>
-            <p class="modal-desc">输入你的 DeepSeek API Key 以启用AI对话功能</p>
-            <input type="password" id="apiKeyInput" class="modal-input" placeholder="sk-xxxxxxxxxxxxxxxx" autocomplete="off">
-            <div class="modal-actions">
-                <button class="modal-btn cancel" onclick="app.closeApiKeyModal()">取消</button>
-                <button class="modal-btn confirm" onclick="app.saveApiKey()">保存</button>
-            </div>
-            <p class="modal-hint">💡 你的API Key仅保存在本地浏览器中，不会上传到服务器</p>
         </div>
     </div>
 

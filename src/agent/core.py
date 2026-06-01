@@ -363,15 +363,7 @@ class Agent:
                     session_id=session_id,
                     response=result.final_answer,
                     success=result.success,
-                    reasoning_trace=[
-                        {
-                            "step": i+1,
-                            "thought": t.content[:200],
-                            "action": result.actions[i].tool_name if i < len(result.actions) else None,
-                            "observation_success": result.observations[i].success if i < len(result.observations) else None,
-                        }
-                        for i, t in enumerate(result.thoughts)
-                    ],
+                    reasoning_trace=None,  # 简化：不返回详细推理过程到前端
                     token_usage=result.token_usage,
                     metadata={
                         "mode": "react",

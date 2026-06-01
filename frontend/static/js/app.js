@@ -4,7 +4,7 @@ class B1tAIApp {
         this.messages = [];
         this.chatHistory = [];
         this.currentChatId = null;
-        this.reactMode = false;
+        this.reactMode = true;
         this.isLoading = false;
         this.sidebarCollapsed = false;
 
@@ -40,10 +40,6 @@ class B1tAIApp {
         this.usageCalls = document.getElementById('usageCalls');
         this.lastUpdated = document.getElementById('lastUpdated');
         this.refreshUsageBtn = document.getElementById('refreshUsageBtn');
-        
-        // API Key设置
-        this.apiKeyModal = document.getElementById('apiKeyModal');
-        this.apiKeyInput = document.getElementById('apiKeyInput');
 
         // 侧边栏折叠元素
         this.sidebarTouchZone = document.getElementById('sidebarTouchZone');
@@ -105,18 +101,6 @@ class B1tAIApp {
         this.refreshUsageBtn.addEventListener('click', () => {
             this.fetchUsageStats();
         });
-
-        // 设置按钮 - 打开API Key设置
-        const settingsBtn = document.querySelector('.settings-btn');
-        if (settingsBtn) {
-            settingsBtn.addEventListener('click', () => {
-                this.openApiKeyModal();
-            });
-            settingsBtn.style.cursor = 'pointer';
-        }
-
-        // 页面加载时检查API Key状态
-        this.checkApiKeyStatus();
 
         // 侧边栏折叠/展开（使用透明触摸区域）
         if (this.sidebarTouchZone) {
@@ -181,7 +165,7 @@ class B1tAIApp {
         this.filePreview.style.display = 'flex';
         this.filePreview.innerHTML = this.selectedFiles.map((file, index) => {
             const isImage = file.type.startsWith('image/');
-            const fileIcon = this.getFileIcon(file.type);
+            const fileIcon = this.getFileIcon(file);
             
             if (isImage) {
                 const imageUrl = URL.createObjectURL(file);
@@ -207,11 +191,24 @@ class B1tAIApp {
     }
 
     // 获取文件图标SVG
-    getFileIcon(mimeType) {
+    getFileIcon(file) {
+        const mimeType = file.type;
+        const fileName = file.name.toLowerCase();
+        
+        // 代码文件扩展名
+        const codeExts = ['.py', '.js', '.html', '.css', '.json', '.xml', '.yaml', '.yml', 
+                         '.sql', '.java', '.cpp', '.c', '.h', '.go', '.rs', '.php', '.rb',
+                         '.swift', '.kt', '.ts', '.jsx', '.tsx', '.vue', '.scss', '.less',
+                         '.sh', '.bat', '.ps1', '.log', '.csv'];
+        const isCode = codeExts.some(ext => fileName.endsWith(ext));
+        
         if (mimeType.includes('pdf')) {
             return '<path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><polyline points="10 9 9 9 8 9"/>';
         } else if (mimeType.includes('image')) {
             return '<rect x="3" y="3" width="18" height="18" rx="2" ry="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/>';
+        } else if (isCode) {
+            // 代码文件图标
+            return '<polyline points="16 18 22 12 16 6"/><polyline points="8 6 2 12 8 18"/>';
         } else if (mimeType.includes('text') || mimeType.includes('markdown')) {
             return '<path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><polyline points="10 9 9 9 8 9"/>';
         } else {
@@ -492,8 +489,8 @@ class B1tAIApp {
                 this.showLoading(false);
             }
 
-            // 构建消息内容（包含附件信息）
-            let messageContent = content;
+            // 构建消息内容（用于界面显示，包含附件标签）
+            let displayContent = content;
             if (attachments.length > 0) {
                 const attachmentInfo = attachments.map(att => {
                     if (att.type === 'image') {
@@ -502,18 +499,20 @@ class B1tAIApp {
                         return `[文件: ${att.filename}]`;
                     }
                 }).join('\n');
-                messageContent = attachmentInfo + (content ? '\n\n' + content : '');
+                displayContent = attachmentInfo + (content ? '\n\n' + content : '');
             }
 
             // 清空输入框（在发送前清空，防止重复发送时内容还在）
             this.messageInput.value = '';
             this.autoResizeInput();
 
-            // 添加用户消息
-            this.addMessage('user', messageContent, null, attachments);
+            // 添加用户消息（显示用）
+            this.addMessage('user', displayContent, null, attachments);
 
-            // 发送到后端（包含附件内容）
-            await this.sendToAPI(content, attachments);
+            // 发送到后端（传递用户原始输入+附件，后端负责拼接）
+            // 如果用户没输入文字但有附件，构造一个默认提示
+            let apiMessage = content || '请分析我上传的文件内容';
+            await this.sendToAPI(apiMessage, attachments);
         } finally {
             // 延迟释放锁，防止快速连续点击
             setTimeout(() => {
@@ -589,7 +588,7 @@ class B1tAIApp {
                     <span class="message-time">${time}</span>
                 </div>
                 <div class="message-body">${this.formatMessage(message.content)}</div>
-                ${message.thinking ? this.renderThinking(message.thinking) : ''}
+                ${message.thinking ? '<div class="thinking-indicator">💭 已使用 ReAct 推理</div>' : ''}
             </div>
         `;
 
@@ -808,63 +807,6 @@ class B1tAIApp {
                 }
             }
         });
-    // ========== API Key 管理 ==========
-    
-    async checkApiKeyStatus() {
-        try {
-            const response = await fetch('/api/config/api-key-status');
-            const data = await response.json();
-            if (!data.configured || !data.has_key) {
-                // 没有配置API Key，自动弹出设置窗口
-                setTimeout(() => this.openApiKeyModal(), 500);
-            }
-        } catch (e) {
-            // 静默失败
-        }
-    }
-    
-    openApiKeyModal() {
-        if (this.apiKeyModal) {
-            this.apiKeyModal.style.display = 'flex';
-            if (this.apiKeyInput) {
-                this.apiKeyInput.focus();
-            }
-        }
-    }
-    
-    closeApiKeyModal() {
-        if (this.apiKeyModal) {
-            this.apiKeyModal.style.display = 'none';
-        }
-    }
-    
-    async saveApiKey() {
-        const apiKey = this.apiKeyInput ? this.apiKeyInput.value.trim() : '';
-        if (!apiKey) {
-            alert('请输入API Key');
-            return;
-        }
-        
-        try {
-            const response = await fetch('/api/config/api-key', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ api_key: apiKey })
-            });
-            
-            const data = await response.json();
-            
-            if (data.success) {
-                this.closeApiKeyModal();
-                // 保存到localStorage
-                localStorage.setItem('b1tai_api_key_set', 'true');
-                alert('API Key 设置成功！');
-            } else {
-                alert('设置失败：' + (data.detail || '未知错误'));
-            }
-        } catch (error) {
-            alert('设置失败：' + error.message);
-        }
     }
 }
 

@@ -5,7 +5,7 @@ Main entry point for the API server
 import asyncio
 from contextlib import asynccontextmanager
 from pathlib import Path
-from typing import Optional
+from typing import Optional, List
 
 # Load environment variables from .env file (must be before other imports)
 try:
@@ -25,6 +25,9 @@ from pydantic import BaseModel, Field
 from uvicorn import Config, Server
 import shutil
 import uuid
+import base64
+import httpx
+import os
 
 from src.agent.core import Agent
 from src.utils.config import get_config
@@ -32,13 +35,21 @@ from src.utils.logger import setup_logger, get_logger
 
 
 # Pydantic models for API requests/responses
+class AttachmentItem(BaseModel):
+    """Attachment item model"""
+    filename: str
+    type: str
+    content: Optional[str] = None
+    url: Optional[str] = None
+
+
 class ChatRequest(BaseModel):
     """Chat request model"""
     message: str = Field(..., min_length=1, max_length=10000)
     session_id: Optional[str] = None
     use_react: bool = Field(default=True, description="Use ReAct planning for complex tasks")
     stream: bool = Field(default=False, description="Enable streaming response")
-    attachments: list = Field(default=[], description="List of uploaded file attachments")
+    attachments: List[AttachmentItem] = Field(default=[], description="List of uploaded file attachments")
 
 
 class AttachmentInfo(BaseModel):
@@ -92,18 +103,9 @@ async def lifespan(app: FastAPI):
     try:
         # Initialize the agent
         agent_instance = Agent(auto_initialize=False)
+        await agent_instance.initialize()
         
-        # 尝试初始化，如果没有API Key则允许启动（前端可动态设置）
-        try:
-            await agent_instance.initialize()
-            logger.info("✅ Agent ready to serve requests!")
-        except ValueError as e:
-            if "API key not configured" in str(e):
-                logger.warning("⚠️ API Key未配置，请在设置中填入DeepSeek API Key")
-                # 创建一个占位agent实例，前端可以动态设置key
-                agent_instance._initialized = False
-            else:
-                raise
+        logger.info("✅ Agent ready to serve requests!")
         
         yield  # Application is running
         
@@ -180,6 +182,81 @@ UPLOAD_DIR.mkdir(exist_ok=True)
 app.mount("/uploads", StaticFiles(directory=str(UPLOAD_DIR)), name="uploads")
 
 
+# ==================== Vision API ====================
+
+async def recognize_image(file_path: Path, filename: str) -> Optional[str]:
+    """
+    使用 SiliconFlow 视觉模型识别图片内容
+    
+    Returns: 图片描述文本，失败返回 None
+    """
+    api_key = os.getenv("SILICONFLOW_API_KEY", "")
+    model = os.getenv("SILICONFLOW_VISION_MODEL", "Qwen/Qwen3-VL-8B-Instruct")
+    
+    if not api_key:
+        logger.warning("SiliconFlow API key not configured, skipping image recognition")
+        return None
+    
+    try:
+        # 读取图片并转base64
+        with open(file_path, "rb") as f:
+            image_data = f.read()
+        
+        # 判断图片MIME类型
+        ext = file_path.suffix.lower()
+        mime_map = {
+            '.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg',
+            '.gif': 'image/gif', '.webp': 'image/webp',
+        }
+        mime_type = mime_map.get(ext, 'image/png')
+        
+        b64_image = base64.b64encode(image_data).decode('utf-8')
+        
+        # 调用 SiliconFlow 视觉API（兼容OpenAI格式）
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            response = await client.post(
+                "https://api.siliconflow.cn/v1/chat/completions",
+                headers={
+                    "Authorization": f"Bearer {api_key}",
+                    "Content-Type": "application/json",
+                },
+                json={
+                    "model": model,
+                    "messages": [
+                        {
+                            "role": "user",
+                            "content": [
+                                {
+                                    "type": "image_url",
+                                    "image_url": {
+                                        "url": f"data:{mime_type};base64,{b64_image}"
+                                    }
+                                },
+                                {
+                                    "type": "text",
+                                    "text": "请详细描述这张图片的内容，包括文字、物体、场景等信息。"
+                                }
+                            ]
+                        }
+                    ],
+                    "max_tokens": 1000,
+                }
+            )
+            
+            if response.status_code == 200:
+                result = response.json()
+                content = result['choices'][0]['message']['content']
+                logger.info(f"Image recognition success: {filename}, {len(content)} chars")
+                return content
+            else:
+                logger.warning(f"SiliconFlow API error: {response.status_code} - {response.text}")
+                return None
+                
+    except Exception as e:
+        logger.error(f"Image recognition failed: {e}")
+        return None
+
+
 # ==================== API Routes ====================
 
 
@@ -210,6 +287,19 @@ async def upload_file(file: UploadFile = File(...)):
     content_type = file.content_type or 'application/octet-stream'
     file_type = allowed_types.get(content_type, 'unknown')
     
+    # 代码文件扩展名映射
+    code_extensions = {
+        '.py': 'python', '.js': 'javascript', '.html': 'html', '.css': 'css',
+        '.json': 'json', '.xml': 'xml', '.yaml': 'yaml', '.yml': 'yaml',
+        '.sql': 'sql', '.java': 'java', '.cpp': 'cpp', '.c': 'c', '.h': 'c',
+        '.go': 'go', '.rs': 'rust', '.php': 'php', '.rb': 'ruby',
+        '.swift': 'swift', '.kt': 'kotlin', '.ts': 'typescript',
+        '.jsx': 'jsx', '.tsx': 'tsx', '.vue': 'vue',
+        '.scss': 'scss', '.less': 'less',
+        '.sh': 'shell', '.bat': 'batch', '.ps1': 'powershell',
+        '.log': 'log', '.csv': 'csv',
+    }
+    
     if file_type == 'unknown':
         # 尝试从文件名判断
         ext = Path(file.filename).suffix.lower()
@@ -221,6 +311,10 @@ async def upload_file(file: UploadFile = File(...)):
             '.gif': 'image', '.webp': 'image',
         }
         file_type = ext_map.get(ext, 'unknown')
+        
+        # 检查是否是代码文件
+        if ext in code_extensions:
+            file_type = 'code'
     
     if file_type == 'unknown':
         raise HTTPException(status_code=400, detail=f"Unsupported file type: {content_type}")
@@ -281,13 +375,38 @@ async def upload_file(file: UploadFile = File(...)):
                 logger.warning(f"DOCX extraction failed: {docx_error}")
                 extracted_content = "[Word文档，无法提取文本内容]"
         
+        elif file_type == 'code':
+            # 代码文件直接读取
+            try:
+                with open(file_path, 'r', encoding='utf-8') as f:
+                    extracted_content = f.read()
+                if len(extracted_content) > 8000:
+                    extracted_content = extracted_content[:8000] + "\n\n...(代码过长，已截断，共 " + str(len(extracted_content)) + " 字符)"
+            except UnicodeDecodeError:
+                try:
+                    with open(file_path, 'r', encoding='gbk') as f:
+                        extracted_content = f.read()
+                    if len(extracted_content) > 8000:
+                        extracted_content = extracted_content[:8000] + "\n\n...(代码过长，已截断，共 " + str(len(extracted_content)) + " 字符)"
+                except Exception as code_error:
+                    logger.warning(f"Code file extraction failed: {code_error}")
+                    extracted_content = "[代码文件，无法读取内容]"
+        
         elif file_type == 'doc':
             # DOC文件（旧格式）暂不支持
             extracted_content = "[Word文档(旧格式)，请转换为docx格式]"
         
         elif file_type == 'image':
-            # 图片文件 - 提示用户可以描述图片
-            extracted_content = None  # 图片不提取文本，但可以在消息中说明
+            # 图片文件 - 使用视觉模型识别内容
+            try:
+                image_description = await recognize_image(file_path, file.filename)
+                if image_description:
+                    extracted_content = f"[图片识别结果]\n{image_description}"
+                else:
+                    extracted_content = "[图片文件，视觉识别服务未配置或识别失败]"
+            except Exception as img_error:
+                logger.warning(f"Image recognition error: {img_error}")
+                extracted_content = "[图片文件，识别失败]"
         
         return {
             "success": True,
@@ -316,42 +435,6 @@ async def get_file(filename: str):
     return FileResponse(str(file_path))
 
 
-@app.post("/api/config/api-key", tags=["Config"])
-async def set_api_key(request: dict):
-    """
-    动态设置DeepSeek API Key（用于部署环境）
-    """
-    api_key = request.get('api_key', '')
-    if not api_key:
-        raise HTTPException(status_code=400, detail="API Key不能为空")
-    
-    # 更新环境变量
-    import os
-    os.environ['DEEPSEEK_API_KEY'] = api_key
-    
-    # 重新初始化agent
-    global agent_instance
-    try:
-        if agent_instance:
-            await agent_instance.close()
-        agent_instance = Agent(auto_initialize=False)
-        await agent_instance.initialize()
-        return {"success": True, "message": "API Key设置成功"}
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"设置API Key失败: {str(e)}")
-
-
-@app.get("/api/config/api-key-status", tags=["Config"])
-async def check_api_key():
-    """检查API Key是否已配置"""
-    import os
-    api_key = os.getenv('DEEPSEEK_API_KEY', '')
-    return {
-        "configured": bool(api_key),
-        "has_key": bool(api_key and api_key.startswith('sk-'))
-    }
-
-
 @app.post("/api/chat", response_model=ChatResponse, tags=["Chat"])
 async def chat_endpoint(request: ChatRequest):
     """
@@ -373,13 +456,13 @@ async def chat_endpoint(request: ChatRequest):
         if request.attachments:
             attachment_context = []
             for att in request.attachments:
-                if att.get('content'):
-                    # 文本文件内容
-                    attachment_context.append(f"[文件: {att['filename']}]\n{att['content'][:2000]}...")
-                elif att.get('type') == 'image':
-                    attachment_context.append(f"[图片: {att['filename']}]")
+                if att.content:
+                    # 文本文件或图片识别结果
+                    attachment_context.append(f"[文件: {att.filename}]\n{att.content[:2000]}...")
+                elif att.type == 'image':
+                    attachment_context.append(f"[图片: {att.filename}]")
                 else:
-                    attachment_context.append(f"[附件: {att['filename']}]")
+                    attachment_context.append(f"[附件: {att.filename}]")
             
             if attachment_context:
                 full_message = "附件内容:\n" + "\n\n".join(attachment_context) + "\n\n用户问题:\n" + request.message
@@ -711,7 +794,9 @@ def run_server(
     print(f"   Port: {port}")
     print(f"   Debug: {debug}")
     print(f"   Docs: http://{host}:{port}/docs")
-    print(f"{'='*60}\n")
+    print(f"{'='*60}")
+    print(f"\n🔗 Local URL: http://localhost:{port}")
+    print(f"   (Ctrl+Click to open in browser)\n")
     
     uvicorn_config = Config(
         app="main:app",
