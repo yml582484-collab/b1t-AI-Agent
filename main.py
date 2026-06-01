@@ -660,6 +660,7 @@ async def reset_endpoint():
     }
 
 
+@app.get("/health", tags=["System"])
 @app.get("/api/health", tags=["System"])
 async def health_endpoint():
     """
