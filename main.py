@@ -784,8 +784,14 @@ def run_server(
     """
     server_config = get_config().config.server
     
-    host = host or server_config.host
-    port = port or server_config.port
+    # Render 平台会设置 PORT 环境变量，优先使用
+    render_port = os.environ.get("PORT")
+    if render_port:
+        port = int(render_port)
+        host = "0.0.0.0"  # Render 要求绑定 0.0.0.0
+    else:
+        host = host or server_config.host
+        port = port or server_config.port
     
     print(f"\n{'='*60}")
     print(f"🚀 Starting DeepSeek Agent API Server")
